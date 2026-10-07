@@ -1,0 +1,332 @@
+package browserStackIssues;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.ParseException;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.FileEntity;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.openqa.selenium.By;
+import org.openqa.selenium.TimeoutException;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.tyss.optimize.common.util.CommonConstants;
+import com.tyss.optimize.nlp.util.Nlp;
+import com.tyss.optimize.nlp.util.NlpException;
+import com.tyss.optimize.nlp.util.NlpRequestModel;
+import com.tyss.optimize.nlp.util.NlpResponseModel;
+import com.tyss.optimize.nlp.util.annotation.InputParam;
+import com.tyss.optimize.nlp.util.annotation.InputParams;
+
+//import lombok.extern.slf4j.Slf4j;
+
+//@Slf4j
+
+public class HandlingReCaptcha implements Nlp {
+//	static WebDriver driver;
+//	static String ml;
+
+	@InputParams({ @InputParam(name = "Access Token", type = "java.lang.String") })
+
+	@Override
+
+	public List<String> getTestParameters() throws NlpException {
+
+		List<String> params = new ArrayList<>();
+
+		return params;
+
+	}
+
+	private static final Logger log = LoggerFactory.getLogger(HandlingReCaptcha.class);
+
+	@Override
+
+	public StringBuilder getTestCode() throws NlpException {
+
+		StringBuilder sb = new StringBuilder();
+
+		return sb;
+
+	}
+
+	@Override
+
+	public NlpResponseModel execute(NlpRequestModel nlpRequestModel) throws NlpException {
+
+		NlpResponseModel nlpResponseModel = new NlpResponseModel();
+
+		Map<String, Object> attributes = nlpRequestModel.getAttributes();
+
+		Duration implicit = null;
+
+		try {
+
+			String access = (String) attributes.get("Access Token");
+
+			WebDriver driver = nlpRequestModel.getWebDriver();
+
+			implicit = driver.manage().timeouts().getImplicitWaitTimeout();
+
+			driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(5));
+
+			WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+
+			if (driver
+
+					.findElements(
+
+							By.xpath("//iframe[@title='reCAPTCHA' ]/parent::div[not(@class='grecaptcha-logo')]/iframe"))
+
+					.size() >= 1) {
+
+				wait.until(ExpectedConditions.elementToBeClickable(
+
+						By.xpath("//iframe[@title='reCAPTCHA' ]/parent::div[not(@class='grecaptcha-logo')]/iframe")));
+
+				WebElement reCap = driver.findElement(
+
+						By.xpath("//iframe[@title='reCAPTCHA' ]/parent::div[not(@class='grecaptcha-logo')]/iframe"));
+
+				driver.switchTo().frame(reCap);
+
+				driver.findElement(By.xpath("//div[@class='recaptcha-checkbox-border']")).click();
+
+				log.info("------->>> click on checkbox");
+
+				Thread.sleep(2000);
+
+				int size = driver.findElements(By.xpath("//div[text()='You are verified']")).size();
+
+				log.info("Size-->>" + size);
+
+				if (size == 0) {
+
+					driver.switchTo().parentFrame();
+
+					log.info("Entered if block");
+
+					try {
+
+						wait.until(ExpectedConditions.elementToBeClickable(
+
+								By.xpath("//iframe[@title=\"recaptcha challenge expires in two minutes\"]")));
+
+					} catch (TimeoutException e) {
+
+					}
+
+					WebElement reCapChalle = driver
+
+							.findElement(By.xpath("//iframe[@title=\"recaptcha challenge expires in two minutes\"]"));
+
+					driver.switchTo().frame(reCapChalle);
+
+					if (driver.findElements(By.xpath(
+
+							"//button[@title=\"Get an audio challenge\" and @style=\"display: none;\"]/../..//div[@class=\"button-holder audio-button-holder\"]"))
+
+							.size() <= 0) {
+
+						driver.findElement(By.xpath("//div[@class=\"button-holder audio-button-holder\"]")).click();
+
+					}
+
+					String href = driver.findElement(By.xpath("//div[@class=\"rc-audiochallenge-control\"]//audio"))
+
+							.getAttribute("src");
+
+					String path = fileDownload(href, System.getProperty("user.home") + File.separator + "file.mp3");
+
+					String ml = getCaptcha(path, access);
+					System.out.println("entrer value");
+//					ml = new Scanner(System.in).next();
+					log.info(ml + "---" + ml.length());
+
+//					if (ml.length() < 1) {
+//
+//						driver.findElement(By.xpath("//div[@class=\"button-holder reload-button-holder\"]")).click();
+//
+//						href = driver.findElement(By.xpath("//div[@class=\"rc-audiochallenge-control\"]//audio"))
+//
+//								.getAttribute("src");
+//
+//						path = fileDownload(href, "C:\\\\Users\\\\Public\\\\file.mp3");
+//
+//						ml = getCaptcha(path, access);
+//
+//					}
+
+					driver.findElement(By.xpath("//input[@id=\"audio-response\"]")).click();
+					driver.findElement(By.xpath("//input[@id=\"audio-response\"]")).sendKeys(ml);
+					driver.findElement(By.xpath("//div[@class=\"verify-button-holder\"]")).click();
+					Thread.sleep(1000);
+					// retry for 3 times
+					for (int i = 0; i < 4; i++) {
+						System.out.println("came to for check");
+						driver.switchTo().parentFrame();
+						try {
+							if (driver.findElement(By.xpath(
+									"//iframe[@title='recaptcha challenge expires in two minutes']/ancestor::div[contains(@style,'visible')]"))
+									.isDisplayed()) {
+								driver.switchTo().frame(reCapChalle);
+								System.out.println("insdie if try");
+								driver.findElement(By.xpath("//div[@class=\"button-holder reload-button-holder\"]"))
+										.click();
+								Thread.sleep(1000);
+								href = driver
+										.findElement(By.xpath("//div[@class=\"rc-audiochallenge-control\"]//audio"))
+										.getAttribute("src");
+								path = fileDownload(href,
+										System.getProperty("user.home") + File.separator + "file.mp3");
+								ml = getCaptcha(path, access);
+								driver.findElement(By.xpath("//input[@id=\"audio-response\"]")).click();
+								driver.findElement(By.xpath("//input[@id=\"audio-response\"]")).sendKeys(ml);
+								driver.findElement(By.xpath("//div[@class=\"verify-button-holder\"]")).click();
+							}
+						} catch (Exception e) {
+//							e.printStackTrace();
+							System.out.println("lets retry");
+							if (e.getMessage().contains(
+									"//iframe[@title='recaptcha challenge expires in two minutes']/ancestor::div[contains(@style,'visible')]")) {
+								break;
+							}
+						}
+					}
+
+					driver.switchTo().parentFrame();
+
+				} else {
+
+					driver.switchTo().parentFrame();
+
+				}
+
+			}
+
+			driver.manage().timeouts().implicitlyWait(implicit);
+
+			nlpResponseModel.setStatus(CommonConstants.pass);
+
+			nlpResponseModel.setMessage("Successfully handled captcha");
+
+		} catch (Exception e) {
+
+			nlpResponseModel.setStatus(CommonConstants.pass);
+
+			nlpResponseModel.setMessage("Failed to handle captcha " + e);
+
+		}
+
+		return nlpResponseModel;
+
+	}
+
+	public static String fileDownload(String fileUrl, String destinationPath) {
+
+		try {
+
+			URL url = new URL(fileUrl);
+
+			InputStream inputStream = url.openStream();
+
+			Path destination = Path.of(destinationPath);
+
+			Files.copy(inputStream, destination, StandardCopyOption.REPLACE_EXISTING);
+
+			log.info("File downloaded successfully.");
+
+		} catch (IOException e) {
+
+			e.printStackTrace();
+
+			log.info("Failed to download the file." + e);
+
+		}
+
+		return destinationPath;
+
+	}
+
+	static String getCaptcha(String mp3InputFile, String accessToken) throws ParseException, IOException {
+
+		String apiUrl = "https://api.wit.ai/speech";
+
+		HttpClient httpClient = HttpClients.createDefault();
+
+		HttpPost httpPost = new HttpPost(apiUrl);
+
+		httpPost.setHeader("Authorization", "Bearer " + accessToken);
+
+		File audioFile = new File(mp3InputFile);
+
+		FileEntity fileEntity = new FileEntity(audioFile, ContentType.create("audio/mpeg"));
+
+		httpPost.setEntity(fileEntity);
+
+		HttpResponse response = httpClient.execute(httpPost);
+
+		HttpEntity responseEntity = response.getEntity();
+
+		if (responseEntity != null) {
+
+			String responseString = EntityUtils.toString(responseEntity);
+
+			EntityUtils.consume(responseEntity);
+
+//			System.out.println(responseString);
+
+			String finalValue = responseString.substring(responseString.lastIndexOf("text\": \"") + 8,
+
+					(responseString.lastIndexOf("\"traits\":") - 5));
+
+			return finalValue;
+
+		} else {
+
+			throw new RuntimeException("Failed to get response from the API");
+
+		}
+
+	}
+
+//	public static void main(String[] args) throws NlpException {
+//		NlpRequestModel model = new NlpRequestModel();
+//		model.getAttributes().put("Access Token", "JS53DG5VXT3TGM3BBVVJ2BI73FNTRULN");
+//		ChromeOptions options = new ChromeOptions();
+//		options.addArguments("--remote-allow-origins=*");
+//		driver = new ChromeDriver(options);
+////		new RemoteWebDriver(new , options)
+//		System.out.println("started");
+//		driver.manage().window().maximize();
+//		driver.get("https://web-preprod1.gateway-hotels.com/en-in/hotels/gateway-bekal/wellness");
+//		driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(10));
+//		new Actions(driver).scrollToElement(driver.findElement(By.xpath("//button[text()='ENQUIRE NOW']")))
+//				.pause(Duration.ofSeconds(1)).click(driver.findElement(By.xpath("//button[text()='ENQUIRE NOW']")))
+//				.build().perform();
+////		driver.findElement(By.xpath("//button[text()='ENQUIRE NOW']")).click();
+//		new Scanner(System.in).next();
+//		System.out.println(new HandlingReCaptcha().execute(model));
+//	}
+
+}
