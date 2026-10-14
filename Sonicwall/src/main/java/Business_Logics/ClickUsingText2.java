@@ -46,7 +46,7 @@ public class ClickUsingText2 implements Nlp {
 			tesseract.setDatapath(LoadLibs.extractTessResources("tessdata").getAbsolutePath());
 //			String extractedText = tesseract.doOCR(new File("C:\\Users\\user\\Downloads\\screenshot1.png"));
 //			System.out.println("----++="+extractedText);
-
+//Testing
 			Screen sc = new Screen();
 //			System.out.println( "-----"+sc.find(new Pattern("C:\\Users\\user\\Downloads\\screenshot1.png")).getText());
 			Thread.sleep(3000);

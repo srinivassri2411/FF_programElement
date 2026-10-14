@@ -1,4 +1,4 @@
-	package Mail;
+package Mail;
  
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;

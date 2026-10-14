@@ -16,12 +16,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.FileAttribute;
+import java.security.InvalidParameterException;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
@@ -89,7 +95,9 @@ import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 public class GenerateReportAndTriggerEndNotificationForNormalScripts implements Nlp {
 	public static String failedStepId = "";
 	public static int slNoAndRowNumber = 1;
@@ -125,6 +133,8 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 	private static boolean exitFlagForFailedStep = false;
 	private static boolean exitFlagForActualBehaviourAddition = false;
 	private static AndroidDriver driver = null;
+	public static String failedStep = "";
+	public static String screenShotPath = "";
 
 	public static String executionId = "";
 	public static String variableData = "";
@@ -160,10 +170,10 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			String licenseId = exeIdentifiers.get("licenseId");
 			projectId = exeIdentifiers.get("projectId");
 
-			// executionId = "EXEC39416";
-			// runId = "Run282f75de-4752-476d-ba59-abd8273b8874";
-			// String licenseId = "LIC4900";
-			// projectId = "PJT1002";
+//			executionId = "EXEC42360";
+//			runId = "Runa110eb9e-0ac9-4f57-8a53-da9dd8b7b7e0";
+//			String licenseId = "LIC4900";
+//			projectId = "PJT1002";
 
 			// Set BASE URI
 			baseURI = baseUri;
@@ -172,32 +182,31 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			fireflinkPassword = encryptPassword(fireflinkPassword);
 			String signInRequestPayload = "{ \"emailId\": \"" + fireflinkUsername + "\", \"password\": \""
 					+ fireflinkPassword + "\"}";
-			String signInResponsePayload = postRequest("appmanagement/optimize/v1/public/user/signin",
+			String signInResponsePayload = postRequest("appmanagement/optimize/v1/public/user/client-signin",
 					signInRequestPayload);
 
-			String message = convertToString(getJsonValue(signInResponsePayload, "message"));
+			log.info("signInResponsePayload" + signInResponsePayload);
+
+			String message = convertToString(getJsonValue(signInResponsePayload, "status"));
 
 			// Provide message if EmailID/Password is Invalid
-			if (message != null && message.contains("Email or Password is invalid")) {
-				System.err.println(message);
-				throw new RuntimeException(message);
+			if (message != null && !message.contains("SUCCESS")) {
+				throw new InvalidParameterException(convertToString(getJsonValue(signInResponsePayload, "message")));
 			}
-
 			// Access Token
 			token = convertToString(getJsonValue(signInResponsePayload, "responseObject.access_token"));
-
 			// Create execution folder
 			String homeDir = System.getProperty("user.home");
 			String currentTimeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
 			String folderName = "Fireflink" + File.separator + executionId + "_" + currentTimeStamp;
 
 			executionFolderPath = createDirectory(homeDir, folderName);
-			System.out.println("Created Folder at: " + executionFolderPath);
+			log.info("Created Folder at: " + executionFolderPath);
 
 			String reportHeaders = "Sl No,CR No,CR Name,Source,Module,Current Plan,Target Plan,DTH/NDTH,Scenario,Precondition + Scenario Description with Steps,Expected Behaviour,Actual Behaviour,Status,Step/ Sub Step of issue occurrence,Issue/ Error Description,Executed Date,Executed By,Defect ID,Defect Source,Execution ID,Type,Time Stamp";
 			String defectHeaders = "Sl No,CR No,CR Name,Module,Test case,Step/ Sub Step of issue occurrence,Source,Steps To reproduce,Issue/ Error Description,Created Date,Attachment of Screenshot,Defect Source,Defect ID,Defect Status,Resolution,Closed Date";
 
-			if (!variableData.isEmpty() && !variableData.equals("null") && !variableData.equals("---")) {
+			if (!variableData.equals("null") && !variableData.isEmpty() && !variableData.equals("---")) {
 				storeVariableDataToList(token);
 				for (Entry<String, String> entry : variableMap.entrySet()) {
 					reportHeaders = reportHeaders + "," + entry.getKey();
@@ -225,18 +234,18 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			Map<String, String> queryMapSuiteResults = Map.of("executionId", executionId, "runId", runId);
 			String suiteLevelMongoData = connectAndFetchMongoDocumentsAsJsonString(queryMapSuiteResults, null, null,
 					licenseId + "_" + executionId + "_entity_results");
-			System.out.println(suiteLevelMongoData);
+			log.info("suiteLevelMongoData" + suiteLevelMongoData);
 
 			// Get Script ids as List
 			List<String> scriptIdList = (List<String>) getJsonValue(suiteLevelMongoData,
 					"[?(@.entityType=='Script')].originalId");
-
+			log.info("Script Id List" + scriptIdList);
 			// Get Execution details using API
 			String executionDetailsResponsePayload = getRequest(
 					"dashboardexecution/optimize/v1/dashboard/project/licenseId/" + licenseId + "/projectId/"
 							+ projectId + "/executionId/" + executionId + "/manual-test-mapping",
 					"Authorization", "Bearer " + token);
-			System.out.println(executionDetailsResponsePayload);
+			log.info("executionDetailsResponsePayload" + executionDetailsResponsePayload);
 
 			executedBy = convertToString(
 					getJsonValue(executionDetailsResponsePayload, "responseObject.runInitiatedBy"));
@@ -248,6 +257,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 					"responseObject.autoToManualMap");
 
 			for (int i = 1; i < scriptIdList.size() - 1; i++) { // Ignore first and last script
+
 				scriptId = scriptIdList.get(i);
 
 				// Create Folder to Store Screenshots
@@ -270,11 +280,12 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 				String manualTcId = autoToManualMap.get(scriptId);
 
 				if (manualTcId != null) {
+					log.info("ScriptID==> " + scriptId + " moduleId==> " + moduleId + " manualTCID==> " + manualTcId);
 					// Manual test case level Api Request
 					String manualTestCaseLevelResponsePayload = getRequest(
 							"project/optimize/v1/scripts/modules/" + moduleId + "/script/" + manualTcId,
 							"Authorization", "Bearer " + token, "projectId", projectId);
-
+					log.info("manualTestCaseLevelResponsePayload" + manualTestCaseLevelResponsePayload);
 					// Get CR Number, CR Name and pre condition from manual test case
 					List<Map<String, Object>> testCaseDetails = (List<Map<String, Object>>) getJsonValue(
 							manualTestCaseLevelResponsePayload, "responseObject.testCaseDetails");
@@ -282,14 +293,14 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 					for (Map<String, Object> detail : testCaseDetails) {
 						if (detail.get("label").toString().equals("Requirement Id")) {
 							List<String> valueList = (List<String>) detail.get("value");
-							if (!valueList.isEmpty()) {
+							if (valueList != null && !valueList.isEmpty()) {
 								crName = valueList.get(0).split("_")[0];
 								crNumber = valueList.get(0).split("_")[1];
 							}
 
 						} else if (detail.get("label").toString().equals("Pre condition and steps")) {
 							List<String> valueList = (List<String>) detail.get("value");
-							if (!valueList.isEmpty()) {
+							if (valueList != null && !valueList.isEmpty()) {
 								preConditionSteps = valueList.get(0).split("_")[0];
 							}
 						}
@@ -300,8 +311,8 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 				Map<String, String> queryMapScriptResults = Map.of("executionId", executionId, "runId", runId,
 						"scriptId", scriptId, "type", "step");
 				String scriptLevelMongoData = connectAndFetchMongoDocumentsAsJsonString(queryMapScriptResults, null,
-						null, projectId + "_step_results");
-				System.out.println(scriptLevelMongoData);
+						null, licenseId + "_" + executionId + "_" + "step_results");
+				log.info("scriptLevelMongoData" + scriptLevelMongoData);
 
 				if (!scriptStatus.equals("SKIP")) {
 					// Iterate Steps
@@ -312,6 +323,8 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 					writeDetailsToExcelRowIfFailed();
 					exitFlagForFailedStep = false;
 					failedStepId = "";
+					failedStep = "";
+					screenShotPath = "";
 				} else if (scriptStatus.equals("WARNING") || scriptStatus.equals("PASS")
 						|| scriptStatus.equals("SKIP")) {
 					status = scriptStatus;
@@ -344,7 +357,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 
 			// Send End Mail and Whatsapp Notification
 			String whatsappMessage = "Suite execution for execution Id " + executionId + " is completed and it is ";
-			System.out.println(statusList);
+			log.info("statusList" + statusList);
 			if (statusList.contains("FAIL")) {
 				sendMail(fromMailId, toMailId, "FAIL");
 				whatsappMessage = whatsappMessage + "FAIL";
@@ -367,7 +380,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			nlpResponseModel.setMessage("Generated report successfully.");
 			List<String> reportPathList = new ArrayList<String>();
 			nlpResponseModel.setOutputLocalFilePaths(reportPathList);
-			System.out.println("Completed");
+			log.info("Completed");
 
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -383,23 +396,78 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 		return nlpResponseModel;
 	}
 
+	public static String getDate(String input) {
+		Instant instant = Instant.parse(input);
+
+		DateTimeFormatter formatter = DateTimeFormatter.ofPattern("d/M/yyyy h:mm:ss a").withZone(ZoneOffset.UTC);
+
+		return formatter.format(instant);
+	}
+
 	private static String getRequest(String endpoint, String... headers) {
 		RequestSpecification request = RestAssured.given();
-		if (headers.length % 2 != 0)
+
+		if (headers.length % 2 != 0) {
 			throw new IllegalArgumentException("Headers should be passed as key-value pairs.");
-		for (int i = 0; i < headers.length; i += 2)
-			request.header(headers[i], headers[i + 1], new Object[0]);
-		return ((Response) request.when().get(endpoint, new Object[0])).asString();
+		}
+
+		for (int i = 0; i < headers.length; i += 2) {
+			request.header(headers[i], headers[i + 1]);
+		}
+
+		Response response = request.when().get(endpoint);
+
+		log.info("========================================");
+		log.info("GET Request");
+		log.info("Endpoint    : " + endpoint);
+		log.info("Status Code : " + response.getStatusCode());
+		log.info("Headers     : " + response.getHeaders());
+
+		String responseBody = response.getBody().asString();
+
+		if (responseBody == null || responseBody.trim().isEmpty()) {
+			log.info("Response Body: <EMPTY>");
+		} else {
+			log.info("Response Body:");
+			log.info(response.asPrettyString());
+		}
+
+		log.info("========================================");
+
+		return responseBody;
 	}
 
 	private static String postRequest(String endpoint, String requestBody, String... headers) {
 		RequestSpecification request = RestAssured.given();
-		if (headers.length % 2 != 0)
+
+		if (headers.length % 2 != 0) {
 			throw new IllegalArgumentException("Headers should be passed as key-value pairs.");
-		for (int i = 0; i < headers.length; i += 2)
-			request.header(headers[i], headers[i + 1], new Object[0]);
-		return ((Response) request.body(requestBody).contentType(ContentType.JSON).when().post(endpoint, new Object[0]))
-				.asString();
+		}
+
+		for (int i = 0; i < headers.length; i += 2) {
+			request.header(headers[i], headers[i + 1]);
+		}
+
+		Response response = request.body(requestBody).contentType(ContentType.JSON).when().post(endpoint);
+
+		log.info("========================================");
+		log.info("POST Request");
+		log.info("Endpoint    : " + endpoint);
+		log.info("Status Code : " + response.getStatusCode());
+		log.info("Headers     : " + response.getHeaders());
+
+		String responseBody = response.getBody().asString();
+
+		if (responseBody == null || responseBody.trim().isEmpty()) {
+			log.info("Response Body: <EMPTY>");
+		} else {
+			log.info("Response Body:");
+			log.info(response.asPrettyString());
+		}
+
+		log.info("========================================");
+
+		return responseBody;
 	}
 
 	public static Object getJsonValue(String jsonBody, String jsonPath) {
@@ -472,7 +540,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			// Write the image to the specified folder
 			try (FileOutputStream fos = new FileOutputStream(outputFile)) {
 				fos.write(imageBytes);
-				// System.out.println("Screenshot saved successfully at: " +
+				// log.info("Screenshot saved successfully at: " +
 				// outputFile.getAbsolutePath());
 				return outputFile.getAbsolutePath(); // Return the absolute path
 			} catch (IOException e) {
@@ -510,7 +578,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 				workbook.write(fileOut);
 			}
 
-			// System.out.println("Excel file created successfully at: " + filePath);
+			// log.info("Excel file created successfully at: " + filePath);
 			return filePath;
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -563,43 +631,47 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 	}
 
 	public static void storeVariableDataToList(String token) {
-		for (int i = 0; i < (variableData.split(",")).length; i++) {
-			String variableType = variableData.split(",")[i].split("##")[0].trim();
-			String variableName = variableData.split(",")[i].split("##")[1].trim();
-			String variableDetailResponse = "";
-			boolean flag = false;
-			if (variableType.equals("GV")) {
-				variableDetailResponse = getRequest("project/optimize/v1/variable/type/GLOBAL",
-						new String[] { "Authorization", "Bearer " + token, "projectId", projectId });
-				List<Map> variables = (List<Map>) getJsonValue(variableDetailResponse, "responseObject");
-				for (Map varMap : variables) {
-					if (varMap.get("name").equals(variableName)) {
-						String variableValue = (String) varMap.get("value");
-						variableMap.put(variableName, variableValue);
-						flag = true;
-						break;
+		if (!variableData.isEmpty() && !variableData.equals("null") && !variableData.equals("---")) {
+			for (int i = 0; i < (variableData.split(",")).length; i++) {
+				String variableType = variableData.split(",")[i].split("##")[0].trim();
+				String variableName = variableData.split(",")[i].split("##")[1].trim();
+				String variableDetailResponse = "";
+				boolean flag = false;
+				if (variableType.equals("GV")) {
+					variableDetailResponse = getRequest("project/optimize/v1/variable/type/GLOBAL",
+							new String[] { "Authorization", "Bearer " + token, "projectId", projectId });
+					log.info("GV variableDetailResponse" + variableDetailResponse);
+					List<Map> variables = (List<Map>) getJsonValue(variableDetailResponse, "responseObject");
+					for (Map varMap : variables) {
+						if (varMap.get("name").equals(variableName)) {
+							String variableValue = (String) varMap.get("value");
+							variableMap.put(variableName, variableValue);
+							flag = true;
+							break;
+						}
 					}
-				}
-				if (!flag)
-					System.err
-							.println("Variable: " + variableName + " Not Available in " + variableType + " Variables");
-			} else if (variableType.equals("PEV")) {
-				variableDetailResponse = getRequest("project/optimize/v1/variable/type/PROJECT_ENVIRONMENT",
-						new String[] { "Authorization", "Bearer " + token, "projectId", projectId });
-				List<Map> variables = (List<Map>) getJsonValue(variableDetailResponse, "responseObject");
-				for (Map varMap : variables) {
-					if (varMap.get("name").equals(variableName)) {
-						String variableValue = (String) varMap.get("value");
-						variableMap.put(variableName, variableValue);
-						flag = true;
-						break;
+					if (!flag)
+						System.err.println(
+								"Variable: " + variableName + " Not Available in " + variableType + " Variables");
+				} else if (variableType.equals("PEV")) {
+					variableDetailResponse = getRequest("project/optimize/v1/variable/type/PROJECT_ENVIRONMENT",
+							new String[] { "Authorization", "Bearer " + token, "projectId", projectId });
+					log.info("PEV variableDetailResponse" + variableDetailResponse);
+					List<Map> variables = (List<Map>) getJsonValue(variableDetailResponse, "responseObject");
+					for (Map varMap : variables) {
+						if (varMap.get("name").equals(variableName)) {
+							String variableValue = (String) varMap.get("value");
+							variableMap.put(variableName, variableValue);
+							flag = true;
+							break;
+						}
 					}
+					if (!flag)
+						System.err.println(
+								"Variable: " + variableName + " Not Available in " + variableType + " Variables");
+				} else {
+					System.err.println("Invalid Variable Type");
 				}
-				if (!flag)
-					System.err
-							.println("Variable: " + variableName + " Not Available in " + variableType + " Variables");
-			} else {
-				System.err.println("Invalid Variable Type");
 			}
 		}
 	}
@@ -621,8 +693,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Actual Behaviour",
 					processListIntoString(actualBehaviourList));
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Status", status);
-		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Executed Date",
-				executedDate.replace("T", " "));
+		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Executed Date", getDate(executedDate));
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Executed By", executedBy);
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Execution ID", executionId);
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Time Stamp", timeStamp);
@@ -634,7 +705,6 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 	}
 
 	public static void writeDetailsToExcelRowIfFailed() throws Exception {
-		String screenShotPath;
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Sl No", Integer.toString(slNoAndRowNumber));
 		writeDataToExcelUsingColumnHeader(defectsSheet, slNoAndRowNumberForDefect, "Sl No",
 				Integer.toString(slNoAndRowNumberForDefect));
@@ -661,8 +731,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Actual Behaviour",
 					processListIntoString(actualBehaviourList));
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Status", status);
-		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Executed Date",
-				executedDate.replace("T", " "));
+		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Executed Date", getDate(executedDate));
 		writeDataToExcelUsingColumnHeader(defectsSheet, slNoAndRowNumberForDefect, "Created Date", createdDate);
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Executed By", executedBy);
 		writeDataToExcelUsingColumnHeader(reportSheet, slNoAndRowNumber, "Execution ID", executionId);
@@ -672,16 +741,6 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			writeDataToExcelUsingColumnHeader(defectsSheet, slNoAndRowNumberForDefect, var.getKey(), var.getValue());
 		}
 
-		String failedStepResponsePayload = getRequest(
-				"executionresult/optimize/v1/executionResponse/step/" + failedStepId,
-				new String[] { "Authorization", "Bearer " + token, "projectId", projectId });
-		String failedStep = convertToString(getJsonValue(failedStepResponsePayload, "responseObject.name"));
-		String stepId = convertToString(getJsonValue(failedStepResponsePayload, "responseObject.stepId"));
-		try {
-			screenShotPath = convertToString(getJsonValue(failedStepResponsePayload, "responseObject.screenshotPath"));
-		} catch (Exception e) {
-			screenShotPath = "";
-		}
 		String attachmentPath = "";
 		if (screenShotPath.isEmpty()) {
 			attachmentPath = "NA";
@@ -689,7 +748,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			String requestBody = "{\"bucketName\":\"flinko-prod\",\"filePath\":[\"" + screenShotPath
 					+ "\"],\"type\":\"cloudS3\",\"contentType\":\"screenshot\"}";
 			attachmentPath = addScreenshotToFolder("dashboardexecution/optimize/v1/dashboard/download/storage",
-					requestBody, token, projectId, scriptFolderPath, stepId);
+					requestBody, token, projectId, scriptFolderPath, failedStepId);
 		}
 		writeDataToExcelUsingColumnHeader(defectsSheet, slNoAndRowNumberForDefect, "Attachment of Screenshot",
 				attachmentPath);
@@ -730,21 +789,16 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 			if (step.get("type").toString().equals("step") && step.get("status").toString().equals("FAIL")) {
 				status = step.get("status").toString();
 				failedStepId = step.get("_id").toString();
+				failedStep = step.get("name").toString();
+				if (step.containsKey("screenshotPath")) {
+					screenShotPath = step.get("screenshotPath").toString();
+				}
 				exitFlagForFailedStep = true;
 			}
 
 			if (step.containsKey("_id") && step.get("type").toString().equals("step")) {
-				String stepUniqueId = step.get("_id").toString();
-				String stepLevelResponsePayoad = getRequest(
-						"/executionresult/optimize/v1/executionResponse/step/" + stepUniqueId, "Authorization",
-						"Bearer " + token, "projectId", projectId);
-				Map<String, Object> responseObject = (Map<String, Object>) getJsonValue(stepLevelResponsePayoad,
-						"responseObject");
-				if (responseObject == null) {
-					continue;
-				}
-				if (responseObject.containsKey("stepInputs")) {
-					List<Map<String, Object>> stepInputs = (List<Map<String, Object>>) responseObject.get("stepInputs");
+				if (step.containsKey("stepInputs")) {
+					List<Map<String, Object>> stepInputs = (List<Map<String, Object>>) step.get("stepInputs");
 					for (Map<String, Object> stepInputMap : stepInputs) {
 						if (stepInputMap.containsKey("reference")) {
 							String reference = stepInputMap.get("reference").toString();
@@ -756,8 +810,8 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 						}
 					}
 				}
-				if (responseObject.containsKey("stepReturn")) {
-					Map<String, Object> stepReturn = (Map<String, Object>) responseObject.get("stepReturn");
+				if (step.containsKey("stepReturn")) {
+					Map<String, Object> stepReturn = (Map<String, Object>) step.get("stepReturn");
 					if (step.get("name").equals("Generate_Expected_Behaviour")) {
 						if (stepReturn.containsKey("value"))
 							expectedBehaviourList.add(stepReturn.get("value").toString());
@@ -766,7 +820,6 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 					if (step.get("name").equals("Generate_Actual_Behaviour") && stepReturn.containsKey("value"))
 						actualBehaviourList.add(stepReturn.get("value").toString());
 				}
-				continue;
 			}
 		}
 	}
@@ -852,7 +905,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 		int maxSwipes = 10;
 		for (int i = 0; i < maxSwipes; i++) {
 			if (!driver.findElements(By.xpath("//android.widget.TextView[contains(@text,'recent')]")).isEmpty()) {
-				System.out.println("Recents cleared");
+				log.info("Recents cleared");
 				driver.executeScript("mobile: shell", Map.of("command", "input", "args", List.of("keyevent", "3")));
 				break;
 			}
@@ -986,7 +1039,7 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 				}
 			}
 
-			// System.out.println("Generated Query : " + query);
+			// log.info("Generated Query : " + query);
 			List<Document> documents = mongoTemplate.find(query, Document.class, collectionName);
 			return documents.stream().map(Document::toJson).collect(java.util.stream.Collectors.joining(",", "[", "]"));
 		} finally {
@@ -1009,7 +1062,8 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 
 	public static void main(String[] args) throws NlpException {
 		// module="/Root/Digital Governance/Missed Call/Pay Channels";
-		// log.info(module.substring(module.lastIndexOf("/")+1, module.length()));
+		// log.info(module.substring(module.lastIndexOf("/")+1,
+		// module.length()));
 		NlpRequestModel model = new NlpRequestModel();
 		model.getAttributes().put("Base_Url", "https://fireflink.tataplay.com/");
 		model.getAttributes().put("Fireflink_Username", "naveen@fireflink.com");
@@ -1018,6 +1072,6 @@ public class GenerateReportAndTriggerEndNotificationForNormalScripts implements 
 		model.getAttributes().put("From_MailId", "praveenj889@tataplay.com");
 		model.getAttributes().put("To_MailId", "praveenj889@tataplay.com");
 		model.getAttributes().put("Whatsapp_Group", "Acoe_test");
-		System.out.println(new GenerateReportAndTriggerEndNotificationForNormalScripts().execute(model));
+		log.info(new GenerateReportAndTriggerEndNotificationForNormalScripts().execute(model) + "");
 	}
 }

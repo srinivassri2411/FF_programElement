@@ -125,12 +125,11 @@ public class OpenWindowsDriverMultipleTry implements Nlp {
 			throws IOException, InterruptedException {
 		for (int i = 1; i <= 3; i++) {
 			log.info("Trying --------" + i);
-//			Runtime.getRuntime().exec("taskkill /F /IM \"SonicWall Cloud Secure Edge.exe\"");
-//			Thread.sleep(500);
-//			Runtime.getRuntime().exec("taskkill /F /IM \"SonicWall Cloud Secure Edge.exe\"");
-//			Thread.sleep(500);
-//			Runtime.getRuntime().exec("adb forward --remove-all");
-			cleanupSonicWall();
+			Runtime.getRuntime().exec("taskkill /F /IM \"SonicWall Cloud Secure Edge.exe\"");
+			Thread.sleep(500);
+			Runtime.getRuntime().exec("taskkill /F /IM \"SonicWall Cloud Secure Edge.exe\"");
+			Thread.sleep(500);
+			Runtime.getRuntime().exec("adb forward --remove-all");
 			Thread.sleep(500);
 			WindowsDriver driver;
 			try {
@@ -220,29 +219,6 @@ public class OpenWindowsDriverMultipleTry implements Nlp {
 		String command = "powershell -command \"(Get-Process | Where-Object {$_.MainWindowTitle -eq '" + windowTitle
 				+ "'}).MainWindowHandle | ForEach-Object { (New-Object -TypeName psobject -Property @{hWnd=$_}) } | ForEach-Object { $sig = '[DllImport(\\\"user32.dll\\\")]public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'; $type = Add-Type -MemberDefinition $sig -Name Win32ShowWindowAsync -Namespace Win32Functions -PassThru; $type::ShowWindowAsync($_.hWnd, 3) }\"";
 		Runtime.getRuntime().exec(command);
-	}
-
-	public static void cleanupSonicWall() throws InterruptedException, IOException {
-
-		String windowTitle = "SonicWall Cloud Secure Edge";
-		String processName = "SonicWall Cloud Secure Edge.exe";
-
-		// First close all matching windows gracefully
-		int closed = DesktopUtil.closeWindowsByTitle(windowTitle);
-
-		System.out.println("Closed " + closed + " SonicWall window(s).");
-
-		Thread.sleep(1000);
-
-		// Then kill any remaining processes
-		Runtime.getRuntime().exec("taskkill /F /IM \"" + processName + "\"");
-
-		Thread.sleep(1000);
-
-		// Do it once more in case the application restarted/spawned another process
-		Runtime.getRuntime().exec("taskkill /F /IM \"" + processName + "\"");
-
-		Thread.sleep(500);
 	}
 
 	public static void main(String[] args) throws NlpException, InterruptedException, IOException {
