@@ -15,6 +15,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import javax.security.auth.login.AccountNotFoundException;
+
 import org.apache.http.HttpHeaders;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -59,6 +61,10 @@ public class GenerateReport {
 			Map<String, String> projectMap = getAllProjectIDs(url, userId, token, licenseType);
 
 			System.out.println("Projects: " + projectMap);
+
+			if (projectMap.isEmpty()) {
+				throw new AccountNotFoundException("Projects are not found please check");
+			}
 
 			ExecutorService executorService = Executors.newFixedThreadPool(2);
 
